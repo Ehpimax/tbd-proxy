@@ -4,11 +4,11 @@ const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 app.post('/save-draft', async (req, res) => {
   try {
-    const { tenantId, clientId, clientSecret, outlookEmail, subject, emailBody, toEmail, toName } = req.body;
+    const { tenantId, clientId, clientSecret, outlookEmail, subject, emailBody, toEmail, toName, bccEmail } = req.body;
 
     // Get token
     const tokenRes = await fetch(
@@ -24,7 +24,20 @@ app.post('/save-draft', async (req, res) => {
       return res.status(401).json({ error: 'Token failed', detail: tokenData });
     }
 
-    // Save draft
+    // Build HTML email with signature image embedded
+    const htmlBody = emailBody;
+
+    const draftPayload = {
+      subject,
+      body: { contentType: 'HTML', content: htmlBody },
+      toRecipients: toEmail ? [{ emailAddress: { address: toEmail, name: toName || toEmail } }] : [],
+      isDraft: true
+    };
+
+    if (bccEmail) {
+      draftPayload.bccRecipients = [{ emailAddress: { address: bccEmail } }];
+    }
+
     const draftRes = await fetch(
       `https://graph.microsoft.com/v1.0/users/${outlookEmail}/messages`,
       {
@@ -33,18 +46,13 @@ app.post('/save-draft', async (req, res) => {
           'Authorization': 'Bearer ' + tokenData.access_token,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          subject,
-          body: { contentType: 'Text', content: emailBody },
-          toRecipients: toEmail ? [{ emailAddress: { address: toEmail, name: toName || toEmail } }] : [],
-          isDraft: true
-        })
+        body: JSON.stringify(draftPayload)
       }
     );
 
     const draftData = await draftRes.json();
     if (draftRes.ok) {
-      res.json({ success: true });
+      res.json({ success: true, id: draftData.id });
     } else {
       res.status(400).json({ error: 'Draft failed', detail: draftData });
     }
@@ -53,7 +61,7 @@ app.post('/save-draft', async (req, res) => {
   }
 });
 
-app.get('/', (req, res) => res.send('TBD Email Proxy — Running'));
+app.get('/', (req, res) => res.send('TBD Email Proxy - Running'));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Proxy running on port ${PORT}`));
